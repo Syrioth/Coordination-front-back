@@ -6,7 +6,7 @@ Un jeu incrémental web multijoueur/connecté où les joueurs cliquent pour prod
 
 ## 📌 Liens Utiles
 
-- **Gestion de Projet (Board)** : [Lien vers votre Board GitHub Projects / Jira](https://vanomme.atlassian.net/jira/software/projects/SCRUM/boards/1?filter=&groupBy=none)
+- **Gestion de Projet (Board)** : [Lien vers le Board Jira](https://vanomme.atlassian.net/jira/software/projects/SCRUM/boards/1?filter=&groupBy=none)
 - **Guide de contribution & Workflow** : [`CONTRIBUTING.md`](./CONTRIBUTING.md)
 - **Vision Produit & Personas** : [`PRODUCT_VISION.md`](./PRODUCT_VISION.md)
 
