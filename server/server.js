@@ -31,9 +31,13 @@ app.get('/api/game/state', (req, res) => {
 
 // Synchronisation avec vérification de cohérence (Anti-cheat basique)
 app.post('/api/game/sync', (req, res) => {
-  const { cookiesClaimed, clientTimestamp } = req.body;
+  const { cookiesClaimed, cookiesPerSecond, clientTimestamp } = req.body;
   const now = Date.now();
   const timeDeltaSec = Math.max(0, (now - mockPlayerState.lastSyncTimestamp) / 1000);
+
+  if (typeof cookiesPerSecond === 'number') {
+    mockPlayerState.cookiesPerSecond = cookiesPerSecond;
+  }
 
   // Marge d'erreur / tolérance de clics manuels max (ex: 20 clics/sec)
   const maxPossibleGain = (mockPlayerState.cookiesPerSecond * timeDeltaSec) + (20 * timeDeltaSec);

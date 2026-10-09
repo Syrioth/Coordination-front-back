@@ -67,6 +67,24 @@
       <button class="cookie-btn" id="click-btn" title="Cliquer pour produire un cookie">🍪</button>
     </div>
 
+    <div style="margin-top: 20px; text-align: left; background: #fdfaf3; padding: 15px; border-radius: 12px; border: 1px solid #fed7aa;">
+      <h3 style="margin: 0 0 10px 0; font-size: 1.1rem; color: #9a3412;">🏪 Boutique (POC)</h3>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <div>
+          <strong>👆 Curseur</strong> (+1 cookie/sec)<br>
+          <small style="color: #78350f;">Possédés : <span id="cursor-count">0</span> | Prix : <span id="cursor-cost">15</span></small>
+        </div>
+        <button id="buy-cursor" style="padding: 6px 14px; border-radius: 8px; border: none; background: #ea580c; color: white; cursor: pointer; font-weight: bold;">Acheter</button>
+      </div>
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+          <strong>👵 Grand-mère</strong> (+5 cookies/sec)<br>
+          <small style="color: #78350f;">Possédées : <span id="grandma-count">0</span> | Prix : <span id="grandma-cost">100</span></small>
+        </div>
+        <button id="buy-grandma" style="padding: 6px 14px; border-radius: 8px; border: none; background: #ea580c; color: white; cursor: pointer; font-weight: bold;">Acheter</button>
+      </div>
+    </div>
+
     <div class="status-box" id="sync-status">
       🟢 Prêt - En attente de synchronisation avec le serveur...
     </div>
@@ -75,9 +93,23 @@
   <script>
     let cookies = 0;
     let cps = 0;
+    let cursors = 0;
+    let cursorCost = 15;
+    let grandmas = 0;
+    let grandmaCost = 100;
+
     const cookieDisplay = document.getElementById('cookie-count');
+    const cpsDisplay = document.getElementById('cps-rate');
     const syncStatus = document.getElementById('sync-status');
     const clickBtn = document.getElementById('click-btn');
+
+    const buyCursorBtn = document.getElementById('buy-cursor');
+    const cursorCountEl = document.getElementById('cursor-count');
+    const cursorCostEl = document.getElementById('cursor-cost');
+
+    const buyGrandmaBtn = document.getElementById('buy-grandma');
+    const grandmaCountEl = document.getElementById('grandma-count');
+    const grandmaCostEl = document.getElementById('grandma-cost');
 
     // Clic manuel
     clickBtn.addEventListener('click', () => {
@@ -85,9 +117,54 @@
       updateDisplay();
     });
 
+    // Achat Curseur
+    buyCursorBtn.addEventListener('click', () => {
+      if (cookies >= cursorCost) {
+        cookies -= cursorCost;
+        cursors += 1;
+        cursorCost = Math.round(cursorCost * 1.15);
+        recalcCps();
+        updateDisplay();
+      }
+    });
+
+    // Achat Grand-mère
+    buyGrandmaBtn.addEventListener('click', () => {
+      if (cookies >= grandmaCost) {
+        cookies -= grandmaCost;
+        grandmas += 1;
+        grandmaCost = Math.round(grandmaCost * 1.15);
+        recalcCps();
+        updateDisplay();
+      }
+    });
+
+    function recalcCps() {
+      cps = (cursors * 1) + (grandmas * 5);
+      cpsDisplay.textContent = cps.toLocaleString();
+    }
+
     function updateDisplay() {
       cookieDisplay.textContent = Math.floor(cookies).toLocaleString();
+      cursorCountEl.textContent = cursors;
+      cursorCostEl.textContent = cursorCost;
+      grandmaCountEl.textContent = grandmas;
+      grandmaCostEl.textContent = grandmaCost;
+
+      // Boutons actifs / désactivés selon le solde
+      buyCursorBtn.style.opacity = cookies >= cursorCost ? '1' : '0.5';
+      buyCursorBtn.disabled = cookies < cursorCost;
+      buyGrandmaBtn.style.opacity = cookies >= grandmaCost ? '1' : '0.5';
+      buyGrandmaBtn.disabled = cookies < grandmaCost;
     }
+
+    // Boucle de production automatique (mise à jour fluide 10x par seconde)
+    setInterval(() => {
+      if (cps > 0) {
+        cookies += cps / 10;
+        updateDisplay();
+      }
+    }, 100);
 
     // Synchronisation périodique avec le serveur (Backend POC)
     async function syncWithServer() {
@@ -96,7 +173,8 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            cookiesClaimed: cookies,
+            cookiesClaimed: Math.floor(cookies),
+            cookiesPerSecond: cps,
             clientTimestamp: Date.now()
           })
         });
@@ -116,6 +194,7 @@
 
     // Sync toutes les 10 secondes
     setInterval(syncWithServer, 10000);
+    updateDisplay();
   </script>
 </body>
 </html>
