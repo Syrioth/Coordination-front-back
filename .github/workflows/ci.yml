@@ -2,9 +2,9 @@ name: CI Workflow
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, master, develop ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main, master, develop ]
     
 # Coupe les droits d'écriture du token GitHub Actions par défaut
 permissions:
