@@ -1,0 +1,2 @@
+# Protège la CI et les règles GitHub contre toute modification non validée
+/.github/ @Syrioth
