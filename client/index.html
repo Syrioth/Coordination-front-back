@@ -296,8 +296,91 @@
     .achievement small { display: block; margin-top: 3px; color: var(--muted); font-size: .74rem; }
     .achievement-count { color: var(--muted); font-size: .8rem; }
 
-    @media (max-width: 760px) {
-      .layout { padding: 22px 14px 36px; }
+    .stats { padding: 20px 22px; }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .stat-tile {
+      border: 1px solid #58402c;
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: #251910;
+    }
+    .stat-tile span { display: block; color: var(--muted); font-size: .74rem; }
+    .stat-tile strong { display: block; margin-top: 4px; font-size: 1rem; color: #ffdb9c; font-variant-numeric: tabular-nums; }
+
+    .compact-button {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 8px 12px;
+      color: #ffdb9c;
+      background: #362619;
+      cursor: pointer;
+      font-size: .8rem;
+      font-weight: 700;
+    }
+    .compact-button[aria-pressed="true"] { border-color: var(--accent); color: #321b09; background: var(--accent); }
+
+    .error-banner {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+      border: 1px solid #b45348;
+      border-radius: 12px;
+      padding: 12px 16px;
+      background: #471f1b;
+      color: #ffe2dc;
+      font-size: .86rem;
+    }
+    .error-banner.visible { display: flex; }
+    .error-banner button {
+      border: 1px solid #f09b8f;
+      border-radius: 8px;
+      padding: 5px 10px;
+      background: #6b2b24;
+      color: #fff;
+      cursor: pointer;
+      font-size: .78rem;
+      font-weight: 700;
+    }
+
+    .not-found {
+      display: none;
+      max-width: 520px;
+      margin: 40px auto;
+      padding: 32px;
+      text-align: center;
+    }
+    .not-found.visible { display: block; }
+
+    /* Contrainte Persona Bernard : Écran cathodique 800x600 */
+    @media (max-width: 820px), (max-height: 640px) {
+      .layout { padding: 12px 12px 20px; }
+      header { margin-bottom: 12px; gap: 10px; }
+      .columns { grid-template-columns: minmax(0, 1fr) minmax(280px, 1fr); gap: 12px; }
+      .bakery { min-height: unset; padding: 14px; }
+      .cookie-wrap { width: 130px; height: 130px; margin: 10px auto 8px; }
+      .cookie-button { font-size: 92px; }
+      .balance { font-size: 2.2rem; }
+      .shop, .upgrades, .achievements, .stats { padding: 12px; }
+      .building-list, .upgrade-list { max-height: 220px; }
+      .achievement-list { max-height: 160px; }
+    }
+
+    body.crt-compact .layout { max-width: 780px; padding: 10px; }
+    body.crt-compact .columns { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+    body.crt-compact .bakery { min-height: unset; padding: 12px; }
+    body.crt-compact .cookie-wrap { width: 110px; height: 110px; margin: 8px auto; }
+    body.crt-compact .cookie-button { font-size: 78px; }
+    body.crt-compact .building-list, body.crt-compact .upgrade-list { max-height: 190px; }
+    body.crt-compact * { transition: none !important; animation: none !important; }
+
+    @media (max-width: 640px) {
+      .layout { padding: 16px 12px 28px; }
       .columns { grid-template-columns: 1fr; }
       .bakery { min-height: unset; }
       .right-column { grid-template-columns: 1fr; }
@@ -321,11 +404,26 @@
       </div>
       <div class="header-actions">
         <div class="status" id="sync-status" role="status" aria-live="polite">🟢 Partie locale prête</div>
+        <button class="compact-button" id="toggle-crt" type="button" aria-pressed="false" title="Activer le mode compact 800×600">🖥️ 800×600</button>
         <button class="reset-button" id="reset-game" type="button">↻ Recommencer</button>
       </div>
     </header>
 
-    <div class="columns">
+    <div class="error-banner" id="error-banner" role="alert" aria-live="assertive">
+      <span id="error-banner-text"></span>
+      <div>
+        <button id="error-reload" type="button" style="display:none;margin-right:6px;">Recharger</button>
+        <button id="error-dismiss" type="button">Fermer</button>
+      </div>
+    </div>
+
+    <section class="panel not-found" id="not-found-view" aria-labelledby="not-found-title">
+      <h2 id="not-found-title">🍪 404 — Page introuvable</h2>
+      <p class="muted" id="not-found-path">La page demandée n'existe pas dans la boulangerie.</p>
+      <button class="buy-button" id="back-home" type="button">Retour à la boulangerie</button>
+    </section>
+
+    <div class="columns" id="game-view">
       <section class="panel bakery" aria-label="Votre boulangerie">
         <p class="eyebrow">Votre réserve</p>
         <p class="balance" id="cookie-count" aria-live="polite">0</p>
@@ -369,6 +467,19 @@
             <span>Améliorez votre savoir-faire</span>
           </div>
           <div class="upgrade-list" id="upgrade-list"></div>
+        </section>
+
+        <section class="panel stats" aria-labelledby="stats-title">
+          <div class="section-heading">
+            <h2 id="stats-title">📊 Statistiques</h2>
+            <span id="stats-completion">0 % succès</span>
+          </div>
+          <div class="stats-grid">
+            <div class="stat-tile"><span>Total produit</span><strong id="stat-total-produced">0</strong></div>
+            <div class="stat-tile"><span>Clics manuels</span><strong id="stat-clicks">0</strong></div>
+            <div class="stat-tile"><span>Gain / clic</span><strong id="stat-click-power">1</strong></div>
+            <div class="stat-tile"><span>Générateurs</span><strong id="stat-buildings">0</strong></div>
+          </div>
         </section>
 
         <section class="panel achievements" aria-labelledby="achievements-title">
@@ -677,6 +788,16 @@
         </div>`;
       }).join('');
       document.getElementById('achievement-count').textContent = `${game.unlockedAchievements.length} / ${achievements.length}`;
+      renderStats();
+    }
+
+    function renderStats() {
+      const completion = Math.round((game.unlockedAchievements.length / achievements.length) * 100);
+      document.getElementById('stats-completion').textContent = `${completion} % succès`;
+      document.getElementById('stat-total-produced').textContent = formatNumber(game.totalProduced);
+      document.getElementById('stat-clicks').textContent = formatNumber(game.clicks);
+      document.getElementById('stat-click-power').textContent = formatNumber(game.clickValue * game.clickMultiplier);
+      document.getElementById('stat-buildings').textContent = formatNumber(totalBuildings(game));
     }
 
     function renderGoal() {
@@ -711,6 +832,7 @@
       }).join('|');
       if (currentUpgradeAvailability !== upgradeAvailabilitySignature) renderUpgrades();
       renderGoal();
+      renderStats();
     }
 
     function checkAchievements() {
@@ -828,21 +950,89 @@
     setInterval(saveGame, 5000);
     window.addEventListener('beforeunload', saveGame);
 
+    const API_BASE = window.__API_BASE__ || 'http://localhost:3001';
+    const IS_DEV_UI = window.location.hostname === 'localhost' || window.location.search.includes('debug=1');
+    const errorBanner = document.getElementById('error-banner');
+    const errorBannerText = document.getElementById('error-banner-text');
+    const errorReloadBtn = document.getElementById('error-reload');
+
+    function showErrorBanner(userMessage, techDetail = '', offerReload = false) {
+      errorBannerText.textContent = IS_DEV_UI && techDetail
+        ? `${userMessage} [DEV: ${techDetail}]`
+        : userMessage;
+      errorReloadBtn.style.display = offerReload ? 'inline-block' : 'none';
+      errorBanner.classList.add('visible');
+    }
+
+    document.getElementById('error-dismiss').addEventListener('click', () => {
+      errorBanner.classList.remove('visible');
+    });
+    errorReloadBtn.addEventListener('click', () => window.location.reload());
+
+    // Mode compact CRT 800x600 (Persona Bernard)
+    document.getElementById('toggle-crt').addEventListener('click', event => {
+      const enabled = document.body.classList.toggle('crt-compact');
+      event.currentTarget.setAttribute('aria-pressed', String(enabled));
+    });
+
+    // Gestion 404 Front-End sur routes hash inconnues
+    function handleRoute() {
+      const hash = window.location.hash;
+      const isValid = !hash || hash === '#' || hash === '#/';
+      document.getElementById('game-view').style.display = isValid ? '' : 'none';
+      document.getElementById('not-found-view').classList.toggle('visible', !isValid);
+      if (!isValid) {
+        document.getElementById('not-found-path').textContent = `La route « ${hash} » est introuvable (404 Not Found).`;
+      }
+    }
+    window.addEventListener('hashchange', handleRoute);
+    document.getElementById('back-home').addEventListener('click', () => {
+      window.location.hash = '';
+      handleRoute();
+    });
+    handleRoute();
+
+    // Filet de sécurité Crash JS global
+    window.addEventListener('error', event => {
+      saveGame();
+      showErrorBanner(
+        'Une erreur inattendue est survenue dans l’interface. Votre partie a été sauvegardée.',
+        event.message || 'Runtime JS error',
+        true
+      );
+    });
+    window.addEventListener('unhandledrejection', event => {
+      saveGame();
+      showErrorBanner(
+        'Une opération asynchrone a échoué. Votre partie reste sauvegardée en local.',
+        String(event.reason || 'Unhandled promise rejection'),
+        false
+      );
+    });
+
     async function syncWithServer() {
       try {
-        const response = await fetch('http://localhost:3001/api/game/sync', {
+        const response = await fetch(`${API_BASE}/api/game/sync`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             cookiesClaimed: Math.floor(game.cookies),
             cookiesPerSecond: game.cps * (Date.now() < game.goldenUntil ? 2 : 1),
+            totalProduced: Math.floor(game.totalProduced),
+            clicks: game.clicks,
+            inventory: game.inventory,
+            achievements: game.unlockedAchievements,
             clientTimestamp: Date.now()
           })
         });
         if (response.ok) {
           setStatus(`🟢 Serveur synchronisé · ${new Date().toLocaleTimeString('fr-FR')}`, true);
         } else {
+          const payload = await response.json().catch(() => null);
+          const errMsg = payload && payload.error ? payload.error.message : `Erreur serveur (HTTP ${response.status})`;
+          const tech = payload && payload.error ? `${payload.error.code} · ${payload.error.requestId}` : `HTTP ${response.status}`;
           setStatus(`⚠️ Synchronisation refusée (HTTP ${response.status})`, false);
+          showErrorBanner(errMsg, tech, false);
         }
       } catch (error) {
         setStatus('⚪ Mode hors-ligne · progression sauvegardée sur cet appareil', false);
