@@ -1,0 +1,271 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Cookie Clicker Web API",
+    "version": "1.0.0",
+    "description": "API REST pour la synchronisation anti-triche, le CRUD des profils joueurs, le catalogue de la boutique et la gestion d'erreurs DEV/PROD."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3001",
+      "description": "Serveur local de développement"
+    }
+  ],
+  "paths": {
+    "/api/health": {
+      "get": {
+        "summary": "Vérification de disponibilité",
+        "responses": {
+          "200": {
+            "description": "Serveur et BDD opérationnels"
+          }
+        }
+      }
+    },
+    "/api/game/state": {
+      "get": {
+        "summary": "État de la session joueur",
+        "parameters": [
+          {
+            "name": "playerId",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "default": "player-default" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Progression récupérée",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PlayerState" }
+              }
+            }
+          },
+          "404": {
+            "description": "Joueur introuvable",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/game/sync": {
+      "post": {
+        "summary": "Synchronisation périodique avec contrôle anti-triche",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SyncRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Synchronisation acceptée et persistée" },
+          "400": {
+            "description": "Alerte anti-triche",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "422": {
+            "description": "Erreur de validation des champs",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shop/items": {
+      "get": {
+        "summary": "Catalogue des 12 générateurs disponibles",
+        "responses": {
+          "200": {
+            "description": "Liste des bâtiments",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/ShopItem" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/players": {
+      "get": {
+        "summary": "Lister les profils joueurs (classés par production totale)",
+        "responses": {
+          "200": {
+            "description": "Liste des joueurs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/PlayerState" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Créer un nouveau profil joueur",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["username"],
+                "properties": {
+                  "username": { "type": "string", "example": "SarahAnalyst" },
+                  "cookies": { "type": "number", "example": 0 },
+                  "cookiesPerSecond": { "type": "number", "example": 0 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Joueur créé" },
+          "409": { "description": "Pseudo déjà existant (UNIQUE constraint)" },
+          "422": { "description": "Validation échouée" }
+        }
+      }
+    },
+    "/api/players/{id}": {
+      "get": {
+        "summary": "Récupérer un joueur par ID",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Profil joueur" },
+          "404": { "description": "Joueur introuvable" }
+        }
+      },
+      "put": {
+        "summary": "Mettre à jour un profil joueur",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": { "type": "string" },
+                  "cookies": { "type": "number" },
+                  "cookiesPerSecond": { "type": "number" },
+                  "totalProduced": { "type": "number" },
+                  "clicks": { "type": "integer" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Profil mis à jour" },
+          "404": { "description": "Joueur introuvable" },
+          "422": { "description": "Validation échouée" }
+        }
+      },
+      "delete": {
+        "summary": "Supprimer un profil joueur",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "204": { "description": "Joueur supprimé" },
+          "400": { "description": "Impossible de supprimer le profil par défaut" },
+          "404": { "description": "Joueur introuvable" }
+        }
+      }
+    },
+    "/api/debug/crash": {
+      "get": {
+        "summary": "Simuler un crash applicatif (démonstration DEV vs PROD)",
+        "responses": {
+          "500": { "description": "Erreur interne (stack en DEV, offusquée en PROD)" }
+        }
+      }
+    },
+    "/api/debug/db-error": {
+      "get": {
+        "summary": "Simuler une erreur SQLite (démonstration DEV vs PROD)",
+        "responses": {
+          "500": { "description": "Erreur BDD (détail SQL en DEV, offusqué en PROD)" }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "PlayerState": {
+        "type": "object",
+        "properties": {
+          "playerId": { "type": "string", "example": "player-default" },
+          "username": { "type": "string", "example": "Boulanger" },
+          "cookies": { "type": "number", "example": 250 },
+          "cookiesPerSecond": { "type": "number", "example": 6 },
+          "totalProduced": { "type": "number", "example": 500 },
+          "clicks": { "type": "integer", "example": 42 },
+          "lastSyncTimestamp": { "type": "integer", "example": 1729000000000 },
+          "inventory": { "type": "object" },
+          "achievements": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "SyncRequest": {
+        "type": "object",
+        "required": ["cookiesClaimed", "cookiesPerSecond"],
+        "properties": {
+          "playerId": { "type": "string", "example": "player-default" },
+          "cookiesClaimed": { "type": "number", "example": 260 },
+          "cookiesPerSecond": { "type": "number", "example": 6 },
+          "totalProduced": { "type": "number", "example": 300 },
+          "clicks": { "type": "integer", "example": 15 }
+        }
+      },
+      "ShopItem": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "example": "cursor" },
+          "name": { "type": "string", "example": "Curseur" },
+          "baseCost": { "type": "number", "example": 15 },
+          "baseCps": { "type": "number", "example": 1 },
+          "costMultiplier": { "type": "number", "example": 1.1 }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "example": false },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": { "type": "string", "example": "VALIDATION_ERROR" },
+              "message": { "type": "string", "example": "Le champ cookiesClaimed doit être un nombre positif." },
+              "status": { "type": "integer", "example": 422 },
+              "requestId": { "type": "string", "example": "req_1763558400_a1b2c3" },
+              "timestamp": { "type": "string", "format": "date-time" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
