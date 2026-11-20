@@ -158,6 +158,81 @@ describe('Cookie Clicker API — CRUD, Sync & Error Management', () => {
     assert.equal(missingItem.body.error.details.field, 'itemId');
   });
 
+  it('POST /api/game/sync saves the balance and returns the saved stats', async () => {
+    const created = await request('/api/players', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'SyncSaver' })
+    });
+    const playerId = created.body.playerId;
+
+    const synced = await request('/api/game/sync', {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId,
+        cookiesClaimed: 42,
+        cookiesPerSecond: 0,
+        totalProduced: 57,
+        clicks: 57,
+        inventory: { cursor: 1, grandma: 0 },
+        achievements: ['first-click']
+      })
+    });
+    assert.equal(synced.status, 200);
+    assert.equal(synced.body.cookies, 42);
+    assert.equal(synced.body.totalProduced, 57);
+    assert.equal(synced.body.clicks, 57);
+
+    const state = await request(`/api/game/state?playerId=${playerId}`);
+    assert.equal(state.status, 200);
+    assert.equal(state.body.cookies, 42);
+    assert.deepEqual(state.body.inventory, { cursor: 1, grandma: 0 });
+    assert.deepEqual(state.body.achievements, ['first-click']);
+  });
+
+  it('POST /api/game/sync anti-cheat rejection returns the last sane server state', async () => {
+    const created = await request('/api/players', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'SneakyBaker', cookies: 30 })
+    });
+    const playerId = created.body.playerId;
+
+    const cheat = await request('/api/game/sync', {
+      method: 'POST',
+      body: JSON.stringify({ playerId, cookiesClaimed: 5e9, cookiesPerSecond: 0 })
+    });
+    assert.equal(cheat.status, 400);
+    assert.equal(cheat.body.error.code, 'ANTI_CHEAT_FLAG');
+    const { serverState } = cheat.body.error.details;
+    assert.equal(serverState.cookies, 30);
+    assert.equal(typeof serverState.inventory, 'object');
+    assert.ok(Array.isArray(serverState.achievements));
+
+    const unchanged = await request(`/api/players/${playerId}`);
+    assert.equal(unchanged.body.cookies, 30);
+  });
+
+  it('POST /api/game/sync rejects malformed inventory and achievements with 422', async () => {
+    const badInventory = await request('/api/game/sync', {
+      method: 'POST',
+      body: JSON.stringify({ cookiesClaimed: 0, inventory: { cursor: -3 } })
+    });
+    assert.equal(badInventory.status, 422);
+    assert.equal(badInventory.body.error.details.field, 'inventory');
+
+    const arrayInventory = await request('/api/game/sync', {
+      method: 'POST',
+      body: JSON.stringify({ cookiesClaimed: 0, inventory: [1, 2] })
+    });
+    assert.equal(arrayInventory.status, 422);
+
+    const badAchievements = await request('/api/game/sync', {
+      method: 'POST',
+      body: JSON.stringify({ cookiesClaimed: 0, achievements: 'first-click' })
+    });
+    assert.equal(badAchievements.status, 422);
+    assert.equal(badAchievements.body.error.details.field, 'achievements');
+  });
+
   it('POST /api/game/sync returns 422 on invalid payload', async () => {
     const res = await request('/api/game/sync', {
       method: 'POST',
