@@ -675,7 +675,17 @@
     const syncStatus = document.getElementById('sync-status');
     const hint = document.getElementById('game-hint');
     const goldenCookie = document.getElementById('golden-cookie');
+    const hadLocalSave = (() => {
+      try {
+        return localStorage.getItem(SAVE_KEY) !== null;
+      } catch (error) {
+        return false;
+      }
+    })();
     let game = loadState();
+    // Nouvel appareil : tant que la partie serveur n'est pas récupérée, on ne synchronise pas
+    // (sinon le premier heartbeat écraserait la sauvegarde serveur avec une partie vide)
+    let serverRestorePending = !hadLocalSave;
     let purchaseMode = 1;
     let purchaseInFlight = false;
     let nextGoldenAt = Date.now() + randomGoldenDelay();
@@ -1096,12 +1106,59 @@
         const payload = await response.json().catch(() => null);
         const errMsg = payload && payload.error ? payload.error.message : `Erreur serveur (HTTP ${response.status})`;
         const tech = payload && payload.error ? `${payload.error.code} · ${payload.error.requestId}` : `HTTP ${response.status}`;
+        const serverState = payload && payload.error && payload.error.code === 'ANTI_CHEAT_FLAG' && payload.error.details
+          ? payload.error.details.serverState
+          : null;
+        if (serverState) {
+          applyServerState(serverState);
+          setStatus('⚠️ Solde réaligné sur la dernière sauvegarde serveur', false);
+          showErrorBanner(`${errMsg} Votre solde a été réaligné sur la dernière sauvegarde du serveur.`, tech, false);
+          return 'rejected';
+        }
         setStatus(`⚠️ Synchronisation refusée (HTTP ${response.status})`, false);
         showErrorBanner(errMsg, tech, false);
         return 'rejected';
       } catch (error) {
         setStatus('⚪ Mode hors-ligne · progression sauvegardée sur cet appareil', false);
         return 'offline';
+      }
+    }
+
+    // Applique un état sauvegardé côté serveur (reprise sur un autre poste ou réalignement anti-triche)
+    function applyServerState(remote) {
+      const isCount = value => Number.isFinite(value) && value >= 0;
+      if (isCount(remote.cookies)) game.cookies = remote.cookies;
+      if (isCount(remote.totalProduced)) game.totalProduced = Math.max(remote.totalProduced, game.cookies);
+      if (Number.isSafeInteger(remote.clicks) && remote.clicks >= 0) game.clicks = remote.clicks;
+      if (remote.inventory && typeof remote.inventory === 'object') {
+        buildings.forEach(building => {
+          const count = remote.inventory[building.id];
+          game.inventory[building.id] = Number.isSafeInteger(count) && count >= 0 ? count : 0;
+        });
+      }
+      if (Array.isArray(remote.achievements)) {
+        game.unlockedAchievements = remote.achievements.filter(id => achievements.some(item => item.id === id));
+      }
+      game.cps = calculateCps(game);
+      renderShop();
+      renderUpgrades();
+      renderAchievements();
+      updateDisplay();
+      saveGame();
+    }
+
+    async function restoreFromServer() {
+      try {
+        const response = await fetch(`${API_BASE}/api/game/state`);
+        if (!response.ok) return false;
+        const remote = await response.json();
+        if (!remote || !(remote.totalProduced > 0 || remote.cookies > 0)) return false;
+        applyServerState(remote);
+        hint.textContent = `☁️ Partie récupérée depuis le serveur : ${formatNumber(game.cookies)} cookies.`;
+        setStatus(`🟢 Partie restaurée depuis le serveur · ${new Date().toLocaleTimeString('fr-FR')}`, true);
+        return true;
+      } catch (error) {
+        return false;
       }
     }
 
@@ -1148,10 +1205,17 @@
       game.offlineCookies = 0;
       saveGame();
     }
-    syncWithServer();
-    // Pas de heartbeat pendant un achat : il écraserait l'inventaire serveur avec l'ancien
+    (async () => {
+      if (serverRestorePending) {
+        await restoreFromServer();
+        serverRestorePending = false;
+      }
+      syncWithServer();
+    })();
+    // Pas de heartbeat pendant un achat (il écraserait l'inventaire serveur avec l'ancien)
+    // ni avant la récupération de la partie serveur
     setInterval(() => {
-      if (!purchaseInFlight) syncWithServer();
+      if (!purchaseInFlight && !serverRestorePending) syncWithServer();
     }, 10000);
   </script>
 </body>
