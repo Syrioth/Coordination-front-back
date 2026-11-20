@@ -71,3 +71,11 @@ jobs:
       - name: Run E2E tests (Playwright)
         working-directory: client
         run: npm run test:e2e
+
+  lint-and-check:
+    name: Lint & Code Integrity
+    runs-on: ubuntu-latest
+    needs: [docs-check, server-ci, client-ci]
+    steps:
+      - name: All CI checks passed
+        run: echo "Docs, Server CI and Client CI (lint, unit, build, E2E) passed."
