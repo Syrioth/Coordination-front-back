@@ -65,9 +65,9 @@
           }
         },
         "responses": {
-          "200": { "description": "Synchronisation acceptée et persistée" },
+          "200": { "description": "Synchronisation acceptée et persistée (renvoie cookies, cookiesPerSecond, totalProduced, clicks, serverTimestamp)" },
           "400": {
-            "description": "Alerte anti-triche",
+            "description": "Alerte anti-triche (ANTI_CHEAT_FLAG) : error.details.serverState contient le dernier état sain sauvegardé",
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/ErrorResponse" }
@@ -75,7 +75,7 @@
             }
           },
           "422": {
-            "description": "Erreur de validation des champs",
+            "description": "Erreur de validation des champs (cookiesClaimed, cookiesPerSecond, inventory, achievements)",
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/ErrorResponse" }
@@ -284,7 +284,9 @@
           "cookiesClaimed": { "type": "number", "example": 260 },
           "cookiesPerSecond": { "type": "number", "example": 6 },
           "totalProduced": { "type": "number", "example": 300 },
-          "clicks": { "type": "integer", "example": 15 }
+          "clicks": { "type": "integer", "example": 15 },
+          "inventory": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 }, "example": { "cursor": 2, "grandma": 1 } },
+          "achievements": { "type": "array", "items": { "type": "string" }, "example": ["first-click"] }
         }
       },
       "ShopItem": {
