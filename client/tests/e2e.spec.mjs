@@ -76,6 +76,19 @@ test.describe('Cookie Clicker E2E — Gameplay, Personas & Error Handling', () =
     await expect(page.locator('#stat-buildings')).toHaveText('0');
   });
 
+  test('Cookie click shows a floating +N feedback, skipped in compact 800x600 mode', async ({ page }) => {
+    await page.goto('/');
+    await page.locator('#click-btn').click();
+    const float = page.locator('.cookie-wrap .click-float').first();
+    await expect(float).toHaveText('+1');
+    await expect(page.locator('.cookie-wrap .click-float')).toHaveCount(0, { timeout: 3000 });
+
+    await page.locator('#toggle-crt').click();
+    await page.locator('#click-btn').click();
+    await expect(page.locator('#cookie-count')).toHaveText('2');
+    await expect(page.locator('.cookie-wrap .click-float')).toHaveCount(0);
+  });
+
   test('Persona Bernard (CRT 800x600): no horizontal overflow', async ({ page }) => {
     await page.setViewportSize({ width: 800, height: 600 });
     await page.goto('/');
