@@ -51,6 +51,18 @@
       }
     },
     {
+      "name": "5b. Buy Shop Item (server-validated)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"itemId\": \"cursor\",\n  \"quantity\": 1\n}"
+        },
+        "url": "http://localhost:3001/api/shop/buy"
+      }
+    },
+    {
       "name": "6. CRUD - List Players",
       "request": {
         "method": "GET",
