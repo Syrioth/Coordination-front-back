@@ -1,0 +1,94 @@
+{
+  "info": {
+    "name": "Cookie Clicker Web - API Collection",
+    "description": "Collection Postman prête à l'emploi pour tester l'API, le CRUD joueurs et les scénarios d'Error Management.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Health Check",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:3001/api/health"
+      }
+    },
+    {
+      "name": "2. Get Player State",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:3001/api/game/state"
+      }
+    },
+    {
+      "name": "3. Sync Game (Normal)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"cookiesClaimed\": 30,\n  \"cookiesPerSecond\": 1,\n  \"totalProduced\": 30,\n  \"clicks\": 10\n}"
+        },
+        "url": "http://localhost:3001/api/game/sync"
+      }
+    },
+    {
+      "name": "4. Sync Game (Anti-cheat 400)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"cookiesClaimed\": 999999999,\n  \"cookiesPerSecond\": 0\n}"
+        },
+        "url": "http://localhost:3001/api/game/sync"
+      }
+    },
+    {
+      "name": "5. List Shop Items",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:3001/api/shop/items"
+      }
+    },
+    {
+      "name": "6. CRUD - List Players",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:3001/api/players"
+      }
+    },
+    {
+      "name": "7. CRUD - Create Player",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"SarahAnalyst\",\n  \"cookies\": 100,\n  \"cookiesPerSecond\": 5\n}"
+        },
+        "url": "http://localhost:3001/api/players"
+      }
+    },
+    {
+      "name": "8. Error Handling - 404 Not Found",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:3001/api/players/inexistant"
+      }
+    },
+    {
+      "name": "9. Error Handling - 500 Crash (DEV vs PROD)",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:3001/api/debug/crash"
+      }
+    },
+    {
+      "name": "10. Error Handling - 500 DB Error (DEV vs PROD)",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:3001/api/debug/db-error"
+      }
+    }
+  ]
+}
