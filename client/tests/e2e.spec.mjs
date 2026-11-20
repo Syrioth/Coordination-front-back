@@ -1,6 +1,69 @@
 import { test, expect } from '@playwright/test';
 
+const SAVE_KEY = 'cookie-clicker-save-v2';
+const json = (status, body) => ({ status, contentType: 'application/json', body: JSON.stringify(body) });
+
 test.describe('Cookie Clicker E2E — Gameplay, Personas & Error Handling', () => {
+  // API injoignable par défaut (mode hors-ligne) : un back lancé en local ne fausse pas les tests.
+  // Les routes déclarées dans un test sont prioritaires sur celle-ci.
+  test.beforeEach(async ({ page }) => {
+    await page.route('http://localhost:3001/**', route => route.abort('connectionrefused'));
+  });
+
+  test('New device: progress is restored from the server before the first sync', async ({ page }) => {
+    const syncBodies = [];
+    await page.route('**/api/game/state', route =>
+      route.fulfill(json(200, {
+        playerId: 'player-default',
+        cookies: 500,
+        cookiesPerSecond: 0,
+        totalProduced: 800,
+        clicks: 40,
+        inventory: { cursor: 0 },
+        achievements: ['first-click', 'hundred']
+      }))
+    );
+    await page.route('**/api/game/sync', route => {
+      syncBodies.push(route.request().postDataJSON());
+      return route.fulfill(json(200, { status: 'synced' }));
+    });
+
+    await page.goto('/');
+
+    await expect(page.locator('#cookie-count')).toHaveText('500');
+    await expect(page.locator('#stat-clicks')).toHaveText('40');
+    await expect(page.locator('#achievement-count')).toContainText('2 / 12');
+    await expect(page.locator('#game-hint')).toContainText('récupérée depuis le serveur');
+    await expect.poll(() => syncBodies.length).toBeGreaterThan(0);
+    expect(syncBodies[0].cookiesClaimed).toBe(500);
+  });
+
+  test('Anti-cheat rejection realigns the local balance on the server state', async ({ page }) => {
+    await page.addInitScript(key => {
+      localStorage.setItem(key, JSON.stringify({ cookies: 999999999, totalProduced: 999999999, clicks: 3, savedAt: Date.now() }));
+    }, SAVE_KEY);
+    await page.route('**/api/game/sync', route =>
+      route.fulfill(json(400, {
+        success: false,
+        error: {
+          code: 'ANTI_CHEAT_FLAG',
+          message: 'Incrément de cookies anormal détecté (contrôle anti-triche).',
+          status: 400,
+          details: {
+            serverCookies: 120,
+            serverState: { cookies: 120, totalProduced: 300, clicks: 3, inventory: { cursor: 0 }, achievements: [] }
+          }
+        }
+      }))
+    );
+
+    await page.goto('/');
+
+    await expect(page.locator('#cookie-count')).toHaveText('120');
+    await expect(page.locator('#error-banner')).toBeVisible();
+    await expect(page.locator('#error-banner-text')).toContainText('réaligné');
+    await expect(page.locator('#sync-status')).toContainText('réaligné');
+  });
   test('clicking cookie updates counter, stats and allows buying a Cursor', async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('#cookie-count')).toHaveText('0');
