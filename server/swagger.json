@@ -103,6 +103,53 @@
         }
       }
     },
+    "/api/shop/buy": {
+      "post": {
+        "summary": "Achat d'un bâtiment validé côté serveur (solde + prix actualisé)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/BuyRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Achat validé, solde débité et achat historisé",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/BuyResponse" }
+              }
+            }
+          },
+          "400": {
+            "description": "Solde serveur insuffisant (INSUFFICIENT_BALANCE)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "404": {
+            "description": "Joueur ou bâtiment introuvable",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "422": {
+            "description": "itemId manquant ou quantity invalide",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/players": {
       "get": {
         "summary": "Lister les profils joueurs (classés par production totale)",
@@ -248,6 +295,29 @@
           "baseCost": { "type": "number", "example": 15 },
           "baseCps": { "type": "number", "example": 1 },
           "costMultiplier": { "type": "number", "example": 1.1 }
+        }
+      },
+      "BuyRequest": {
+        "type": "object",
+        "required": ["itemId"],
+        "properties": {
+          "playerId": { "type": "string", "example": "player-default" },
+          "itemId": { "type": "string", "example": "cursor" },
+          "quantity": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 1, "example": 1 }
+        }
+      },
+      "BuyResponse": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "example": "purchased" },
+          "playerId": { "type": "string", "example": "player-default" },
+          "itemId": { "type": "string", "example": "cursor" },
+          "quantity": { "type": "integer", "example": 1 },
+          "totalCost": { "type": "number", "example": 15 },
+          "cookies": { "type": "number", "example": 10 },
+          "cookiesPerSecond": { "type": "number", "example": 1 },
+          "inventory": { "type": "object", "additionalProperties": { "type": "integer" }, "example": { "cursor": 1, "grandma": 0 } },
+          "nextCost": { "type": "number", "example": 17 }
         }
       },
       "ErrorResponse": {
