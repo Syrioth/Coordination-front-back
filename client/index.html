@@ -661,6 +661,7 @@
     const goldenCookie = document.getElementById('golden-cookie');
     let game = loadState();
     let purchaseMode = 1;
+    let purchaseInFlight = false;
     let nextGoldenAt = Date.now() + randomGoldenDelay();
     let upgradeAvailabilitySignature = '';
 
@@ -740,7 +741,7 @@
       document.querySelectorAll('[data-building]').forEach(button => {
         const building = buildings.find(item => item.id === button.dataset.building);
         const plan = purchasePlan(building);
-        button.disabled = plan.quantity === 0;
+        button.disabled = plan.quantity === 0 || purchaseInFlight;
         button.textContent = plan.quantity
           ? `Acheter ×${plan.quantity} · ${formatNumber(plan.cost)} 🍪`
           : `×${purchaseMode === 'max' ? 'Max' : purchaseMode} · ${formatNumber(costFor(building))} 🍪`;
@@ -855,21 +856,43 @@
       updateDisplay();
     });
 
-    document.getElementById('building-list').addEventListener('click', event => {
-      const button = event.target.closest('[data-building]');
-      if (!button) return;
-      const building = buildings.find(item => item.id === button.dataset.building);
-      if (!building) return;
-      const plan = purchasePlan(building);
-      if (plan.quantity === 0) return;
-      game.cookies -= plan.cost;
-      game.inventory[building.id] += plan.quantity;
+    function applyPurchase(building, quantity, cost) {
+      game.cookies = Math.max(0, game.cookies - cost);
+      game.inventory[building.id] += quantity;
       game.cps = calculateCps(game);
       renderShop();
       renderUpgrades();
       checkAchievements();
       updateDisplay();
       saveGame();
+    }
+
+    document.getElementById('building-list').addEventListener('click', async event => {
+      const button = event.target.closest('[data-building]');
+      if (!button || purchaseInFlight) return;
+      const building = buildings.find(item => item.id === button.dataset.building);
+      if (!building) return;
+      const plan = purchasePlan(building);
+      if (plan.quantity === 0) return;
+
+      purchaseInFlight = true;
+      updateShopAvailability();
+      try {
+        const result = await buyOnServer(building, plan.quantity);
+        if (result.status === 'purchased') {
+          applyPurchase(building, plan.quantity, result.totalCost);
+          setStatus(`🟢 Achat validé par le serveur · ${new Date().toLocaleTimeString('fr-FR')}`, true);
+        } else if (result.status === 'offline') {
+          applyPurchase(building, plan.quantity, plan.cost);
+          setStatus('⚪ Mode hors-ligne · achat enregistré sur cet appareil', false);
+        } else {
+          setStatus(`⚠️ Achat refusé par le serveur (HTTP ${result.httpStatus})`, false);
+          showErrorBanner(result.message, result.techDetail, false);
+        }
+      } finally {
+        purchaseInFlight = false;
+        updateShopAvailability();
+      }
     });
 
     document.getElementById('upgrade-list').addEventListener('click', event => {
@@ -1027,15 +1050,51 @@
         });
         if (response.ok) {
           setStatus(`🟢 Serveur synchronisé · ${new Date().toLocaleTimeString('fr-FR')}`, true);
-        } else {
-          const payload = await response.json().catch(() => null);
-          const errMsg = payload && payload.error ? payload.error.message : `Erreur serveur (HTTP ${response.status})`;
-          const tech = payload && payload.error ? `${payload.error.code} · ${payload.error.requestId}` : `HTTP ${response.status}`;
-          setStatus(`⚠️ Synchronisation refusée (HTTP ${response.status})`, false);
-          showErrorBanner(errMsg, tech, false);
+          return 'synced';
         }
+        const payload = await response.json().catch(() => null);
+        const errMsg = payload && payload.error ? payload.error.message : `Erreur serveur (HTTP ${response.status})`;
+        const tech = payload && payload.error ? `${payload.error.code} · ${payload.error.requestId}` : `HTTP ${response.status}`;
+        setStatus(`⚠️ Synchronisation refusée (HTTP ${response.status})`, false);
+        showErrorBanner(errMsg, tech, false);
+        return 'rejected';
       } catch (error) {
         setStatus('⚪ Mode hors-ligne · progression sauvegardée sur cet appareil', false);
+        return 'offline';
+      }
+    }
+
+    // Achat validé côté serveur : on pousse d'abord le solde courant (sync),
+    // puis le serveur vérifie le prix actualisé et débite. Hors-ligne -> achat local.
+    async function buyOnServer(building, quantity) {
+      const syncResult = await syncWithServer();
+      if (syncResult === 'offline') return { status: 'offline' };
+      if (syncResult === 'rejected') {
+        return {
+          status: 'rejected',
+          httpStatus: 400,
+          message: 'Achat annulé : votre solde n’a pas pu être synchronisé avec le serveur.',
+          techDetail: 'sync rejected before purchase'
+        };
+      }
+      try {
+        const response = await fetch(`${API_BASE}/api/shop/buy`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ itemId: building.id, quantity })
+        });
+        const payload = await response.json().catch(() => null);
+        if (response.ok && payload) {
+          return { status: 'purchased', totalCost: payload.totalCost };
+        }
+        return {
+          status: 'rejected',
+          httpStatus: response.status,
+          message: payload && payload.error ? payload.error.message : `Achat impossible (HTTP ${response.status})`,
+          techDetail: payload && payload.error ? `${payload.error.code} · ${payload.error.requestId}` : `HTTP ${response.status}`
+        };
+      } catch (error) {
+        return { status: 'offline' };
       }
     }
 
@@ -1049,7 +1108,10 @@
       saveGame();
     }
     syncWithServer();
-    setInterval(syncWithServer, 10000);
+    // Pas de heartbeat pendant un achat : il écraserait l'inventaire serveur avec l'ancien
+    setInterval(() => {
+      if (!purchaseInFlight) syncWithServer();
+    }, 10000);
   </script>
 </body>
 </html>
