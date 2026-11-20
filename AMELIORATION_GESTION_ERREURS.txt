@@ -1,0 +1,90 @@
+PROPOSITION D'AMELIORATION - GESTION DES ERREURS (BACK-END)
+=============================================================
+
+Titre : Aligner les niveaux de log de errorHandler sur la matrice ERROR_MANAGEMENT
+        (4xx -> WARN, 5xx -> ERROR)
+
+Fichier concerne : server/errors.js (fonction errorHandler)
+
+
+1. CONSTAT
+----------
+Le middleware global errorHandler appelle systematiquement logger.error(...),
+quel que soit le statut HTTP de l'erreur. Resultat : les erreurs "attendues"
+(operationnelles) sont journalisees au niveau ERROR, comme un vrai crash :
+
+  - 400 ANTI_CHEAT_FLAG / INSUFFICIENT_BALANCE / BAD_REQUEST / INVALID_JSON
+  - 404 NOT_FOUND (route ou ressource introuvable)
+  - 409 CONFLICT (pseudo deja existant)
+  - 422 VALIDATION_ERROR (champ manquant ou invalide)
+
+Toutes ces lignes sont donc aussi ecrites dans server/logs/error.log.
+
+Reproduction (serveur lance en local, BDD en memoire) :
+
+  GET  /api/route-inconnue
+    [ERROR] Route introuvable : GET /api/route-inconnue   {"status":404,...}
+    [WARN]  HTTP request completed                         {"status":404,...}
+
+  POST /api/game/sync  { "cookiesClaimed": -1, "cookiesPerSecond": 0 }
+    [ERROR] Le champ cookiesClaimed doit etre un nombre positif. {"status":422,...}
+    [WARN]  HTTP request completed                                {"status":422,...}
+
+
+2. POURQUOI C'EST UN PROBLEME
+-----------------------------
+a) Incoherence avec la documentation du projet : la matrice de
+   ERROR_MANAGEMENT.md (section 3) prevoit WARN pour 400/409/422,
+   INFO/WARN pour 404, et reserve ERROR aux 500 (crash / DB_ERROR).
+
+b) error.log devient inexploitable : chaque refus anti-triche, chaque faute
+   de frappe dans une URL ou chaque formulaire mal rempli y ajoute une ligne.
+   En PROD, un vrai crash serveur se retrouve noye au milieu d'erreurs normales,
+   ce qui ralentit le diagnostic (objectif "Aider le Dev / Ops" du document).
+
+c) Le meme incident est trace deux fois avec deux niveaux contradictoires :
+   ERROR par errorHandler, puis WARN par requestLogger (server/logger.js).
+
+
+3. AMELIORATION PROPOSEE
+------------------------
+Choisir le niveau de log en fonction de la nature de l'erreur, en s'appuyant
+sur ce que AppError fournit deja (status et isOperational) :
+
+  - status >= 500 OU isOperational === false  -> logger.error (avec la stack)
+  - 400 <= status < 500                         -> logger.warn  (sans la stack)
+
+Esquisse (non appliquee) :
+
+  const isServerFault = normalized.status >= 500 || normalized.isOperational === false;
+  const logMeta = { requestId, code: normalized.code, status: normalized.status,
+                    method: req.method, path: req.originalUrl, details: normalized.details };
+  if (isServerFault) {
+    logger.error(normalized.message, { ...logMeta, stack: normalized.stack });
+  } else {
+    logger.warn(normalized.message, logMeta);
+  }
+
+Le contrat JSON renvoye au front (success, error.code, message, status,
+requestId, timestamp, details, stack en DEV) reste strictement identique :
+seule la journalisation change. Aucun impact sur le front ni sur les tests E2E.
+
+
+4. CRITERES D'ACCEPTATION
+-------------------------
+  - Une erreur 4xx (400, 404, 409, 422) est journalisee au niveau WARN
+    et n'apparait plus dans server/logs/error.log.
+  - Une erreur 5xx (INTERNAL_SERVER_ERROR, DB_ERROR) reste journalisee
+    au niveau ERROR, avec la stack, dans app.log et error.log.
+  - Le corps de reponse HTTP est inchange en DEV comme en PROD.
+  - Un test API (server/tests/api.test.js) verifie qu'une 404 ne produit
+    pas d'entree de niveau ERROR, et que /api/debug/crash en produit une.
+
+
+5. PISTE COMPLEMENTAIRE (FRONT, HORS PERIMETRE DE CETTE PROPOSITION)
+--------------------------------------------------------------------
+syncWithServer (client/index.html) appelle fetch sans delai maximum : si le
+serveur accepte la connexion sans jamais repondre, le badge reste bloque et ne
+bascule jamais en "Mode hors-ligne". ERROR_MANAGEMENT.md (section 4) annonce
+pourtant un helper apiRequest() gerant les timeouts, qui n'existe pas dans le
+code. Un AbortController avec un timeout (ex. 5 s) corrigerait ce cas.
