@@ -33,6 +33,23 @@ function computePurchaseCost(item, owned, quantity) {
   return total;
 }
 
+function isValidInventory(inventory) {
+  if (!inventory || typeof inventory !== 'object' || Array.isArray(inventory)) return false;
+  return Object.values(inventory).every(count => Number.isSafeInteger(count) && count >= 0);
+}
+
+function toSaveState(player) {
+  return {
+    cookies: player.cookies,
+    cookiesPerSecond: player.cookiesPerSecond,
+    totalProduced: player.totalProduced,
+    clicks: player.clicks,
+    inventory: player.inventory,
+    achievements: player.achievements,
+    lastSyncTimestamp: player.lastSyncTimestamp
+  };
+}
+
 function createApp() {
   const app = express();
 
@@ -201,6 +218,28 @@ function createApp() {
         );
       }
 
+      if (inventory !== undefined && !isValidInventory(inventory)) {
+        return next(
+          new AppError(
+            "L'inventaire doit être un objet { bâtiment: quantité entière positive }.",
+            422,
+            'VALIDATION_ERROR',
+            { field: 'inventory' }
+          )
+        );
+      }
+
+      if (
+        achievements !== undefined &&
+        (!Array.isArray(achievements) || achievements.some(item => typeof item !== 'string'))
+      ) {
+        return next(
+          new AppError('Le champ achievements doit être une liste de chaînes.', 422, 'VALIDATION_ERROR', {
+            field: 'achievements'
+          })
+        );
+      }
+
       const db = getDb();
       const row = db.prepare('SELECT * FROM players WHERE id = ?').get(playerId);
       if (!row) {
@@ -221,7 +260,9 @@ function createApp() {
             {
               serverCookies: row.cookies,
               cookiesClaimed,
-              maxAllowedGain: Math.round(maxPossibleGain)
+              maxAllowedGain: Math.round(maxPossibleGain),
+              // Dernier état sain connu : le client s'y réaligne
+              serverState: toSaveState(formatPlayerRow(row))
             }
           )
         );
@@ -261,6 +302,8 @@ function createApp() {
         playerId,
         cookies: cookiesClaimed,
         cookiesPerSecond,
+        totalProduced: nextTotalProduced,
+        clicks: nextClicks,
         serverTimestamp: now
       });
     } catch (err) {
