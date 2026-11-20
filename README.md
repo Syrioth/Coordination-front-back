@@ -2,7 +2,7 @@
 
 Un jeu incrémental web multijoueur/connecté où les joueurs cliquent pour produire des cookies, achètent des améliorations et synchronisent leur progression en temps réel avec une sauvegarde persistante.
 
----
+--- faaaaaaaaah
 
 ## 📌 Liens Utiles
 
