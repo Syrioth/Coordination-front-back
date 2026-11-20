@@ -169,6 +169,22 @@
     .golden-button.visible { display: block; }
     @keyframes glow { to { transform: scale(1.12); box-shadow: 0 0 34px #ffcd45; } }
 
+    .click-float {
+      position: absolute;
+      z-index: 2;
+      color: var(--accent);
+      font-weight: 800;
+      font-size: 1.15rem;
+      text-shadow: 0 2px 4px #110a08cc;
+      pointer-events: none;
+      white-space: nowrap;
+      transform: translate(-50%, -50%);
+      animation: click-float-up .8s ease-out forwards;
+    }
+    @keyframes click-float-up {
+      to { opacity: 0; transform: translate(-50%, calc(-50% - 56px)); }
+    }
+
     .hint { min-height: 22px; margin: 0; color: var(--muted); font-size: .88rem; }
 
     .progress-card {
@@ -659,8 +675,19 @@
     const syncStatus = document.getElementById('sync-status');
     const hint = document.getElementById('game-hint');
     const goldenCookie = document.getElementById('golden-cookie');
+    const hadLocalSave = (() => {
+      try {
+        return localStorage.getItem(SAVE_KEY) !== null;
+      } catch (error) {
+        return false;
+      }
+    })();
     let game = loadState();
+    // Nouvel appareil : tant que la partie serveur n'est pas récupérée, on ne synchronise pas
+    // (sinon le premier heartbeat écraserait la sauvegarde serveur avec une partie vide)
+    let serverRestorePending = !hadLocalSave;
     let purchaseMode = 1;
+    let purchaseInFlight = false;
     let nextGoldenAt = Date.now() + randomGoldenDelay();
     let upgradeAvailabilitySignature = '';
 
@@ -740,7 +767,7 @@
       document.querySelectorAll('[data-building]').forEach(button => {
         const building = buildings.find(item => item.id === button.dataset.building);
         const plan = purchasePlan(building);
-        button.disabled = plan.quantity === 0;
+        button.disabled = plan.quantity === 0 || purchaseInFlight;
         button.textContent = plan.quantity
           ? `Acheter ×${plan.quantity} · ${formatNumber(plan.cost)} 🍪`
           : `×${purchaseMode === 'max' ? 'Max' : purchaseMode} · ${formatNumber(costFor(building))} 🍪`;
@@ -844,32 +871,79 @@
       saveGame();
     }
 
-    document.getElementById('click-btn').addEventListener('click', () => {
+    const MAX_CLICK_FLOATS = 12;
+    const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+    // Feedback "+N" flottant au point de clic (désactivé en mode 800×600 et reduced-motion)
+    function spawnClickFloat(event, gain) {
+      if (reducedMotionQuery.matches || document.body.classList.contains('crt-compact')) return;
+      const wrap = event.currentTarget.parentElement;
+      if (wrap.querySelectorAll('.click-float').length >= MAX_CLICK_FLOATS) return;
+      const rect = wrap.getBoundingClientRect();
+      // Clic clavier (Entrée/Espace) : pas de coordonnées souris -> centre du cookie
+      const fromPointer = event.detail > 0 && event.clientX !== 0;
+      const x = fromPointer ? event.clientX - rect.left : rect.width / 2;
+      const y = fromPointer ? event.clientY - rect.top : rect.height / 2;
+      const float = document.createElement('span');
+      float.className = 'click-float';
+      float.setAttribute('aria-hidden', 'true');
+      float.textContent = `+${formatNumber(gain)}`;
+      float.style.left = `${x}px`;
+      float.style.top = `${y}px`;
+      float.addEventListener('animationend', () => float.remove());
+      wrap.appendChild(float);
+      setTimeout(() => float.remove(), 1200);
+    }
+
+    document.getElementById('click-btn').addEventListener('click', event => {
       game.cookies += 1;
       const clickGain = game.clickValue * game.clickMultiplier;
       game.cookies += clickGain - 1;
       game.totalProduced += clickGain;
       game.clicks += 1;
+      spawnClickFloat(event, clickGain);
       checkAchievements();
       renderUpgrades();
       updateDisplay();
     });
 
-    document.getElementById('building-list').addEventListener('click', event => {
-      const button = event.target.closest('[data-building]');
-      if (!button) return;
-      const building = buildings.find(item => item.id === button.dataset.building);
-      if (!building) return;
-      const plan = purchasePlan(building);
-      if (plan.quantity === 0) return;
-      game.cookies -= plan.cost;
-      game.inventory[building.id] += plan.quantity;
+    function applyPurchase(building, quantity, cost) {
+      game.cookies = Math.max(0, game.cookies - cost);
+      game.inventory[building.id] += quantity;
       game.cps = calculateCps(game);
       renderShop();
       renderUpgrades();
       checkAchievements();
       updateDisplay();
       saveGame();
+    }
+
+    document.getElementById('building-list').addEventListener('click', async event => {
+      const button = event.target.closest('[data-building]');
+      if (!button || purchaseInFlight) return;
+      const building = buildings.find(item => item.id === button.dataset.building);
+      if (!building) return;
+      const plan = purchasePlan(building);
+      if (plan.quantity === 0) return;
+
+      purchaseInFlight = true;
+      updateShopAvailability();
+      try {
+        const result = await buyOnServer(building, plan.quantity);
+        if (result.status === 'purchased') {
+          applyPurchase(building, plan.quantity, result.totalCost);
+          setStatus(`🟢 Achat validé par le serveur · ${new Date().toLocaleTimeString('fr-FR')}`, true);
+        } else if (result.status === 'offline') {
+          applyPurchase(building, plan.quantity, plan.cost);
+          setStatus('⚪ Mode hors-ligne · achat enregistré sur cet appareil', false);
+        } else {
+          setStatus(`⚠️ Achat refusé par le serveur (HTTP ${result.httpStatus})`, false);
+          showErrorBanner(result.message, result.techDetail, false);
+        }
+      } finally {
+        purchaseInFlight = false;
+        updateShopAvailability();
+      }
     });
 
     document.getElementById('upgrade-list').addEventListener('click', event => {
@@ -1027,15 +1101,98 @@
         });
         if (response.ok) {
           setStatus(`🟢 Serveur synchronisé · ${new Date().toLocaleTimeString('fr-FR')}`, true);
-        } else {
-          const payload = await response.json().catch(() => null);
-          const errMsg = payload && payload.error ? payload.error.message : `Erreur serveur (HTTP ${response.status})`;
-          const tech = payload && payload.error ? `${payload.error.code} · ${payload.error.requestId}` : `HTTP ${response.status}`;
-          setStatus(`⚠️ Synchronisation refusée (HTTP ${response.status})`, false);
-          showErrorBanner(errMsg, tech, false);
+          return 'synced';
         }
+        const payload = await response.json().catch(() => null);
+        const errMsg = payload && payload.error ? payload.error.message : `Erreur serveur (HTTP ${response.status})`;
+        const tech = payload && payload.error ? `${payload.error.code} · ${payload.error.requestId}` : `HTTP ${response.status}`;
+        const serverState = payload && payload.error && payload.error.code === 'ANTI_CHEAT_FLAG' && payload.error.details
+          ? payload.error.details.serverState
+          : null;
+        if (serverState) {
+          applyServerState(serverState);
+          setStatus('⚠️ Solde réaligné sur la dernière sauvegarde serveur', false);
+          showErrorBanner(`${errMsg} Votre solde a été réaligné sur la dernière sauvegarde du serveur.`, tech, false);
+          return 'rejected';
+        }
+        setStatus(`⚠️ Synchronisation refusée (HTTP ${response.status})`, false);
+        showErrorBanner(errMsg, tech, false);
+        return 'rejected';
       } catch (error) {
         setStatus('⚪ Mode hors-ligne · progression sauvegardée sur cet appareil', false);
+        return 'offline';
+      }
+    }
+
+    // Applique un état sauvegardé côté serveur (reprise sur un autre poste ou réalignement anti-triche)
+    function applyServerState(remote) {
+      const isCount = value => Number.isFinite(value) && value >= 0;
+      if (isCount(remote.cookies)) game.cookies = remote.cookies;
+      if (isCount(remote.totalProduced)) game.totalProduced = Math.max(remote.totalProduced, game.cookies);
+      if (Number.isSafeInteger(remote.clicks) && remote.clicks >= 0) game.clicks = remote.clicks;
+      if (remote.inventory && typeof remote.inventory === 'object') {
+        buildings.forEach(building => {
+          const count = remote.inventory[building.id];
+          game.inventory[building.id] = Number.isSafeInteger(count) && count >= 0 ? count : 0;
+        });
+      }
+      if (Array.isArray(remote.achievements)) {
+        game.unlockedAchievements = remote.achievements.filter(id => achievements.some(item => item.id === id));
+      }
+      game.cps = calculateCps(game);
+      renderShop();
+      renderUpgrades();
+      renderAchievements();
+      updateDisplay();
+      saveGame();
+    }
+
+    async function restoreFromServer() {
+      try {
+        const response = await fetch(`${API_BASE}/api/game/state`);
+        if (!response.ok) return false;
+        const remote = await response.json();
+        if (!remote || !(remote.totalProduced > 0 || remote.cookies > 0)) return false;
+        applyServerState(remote);
+        hint.textContent = `☁️ Partie récupérée depuis le serveur : ${formatNumber(game.cookies)} cookies.`;
+        setStatus(`🟢 Partie restaurée depuis le serveur · ${new Date().toLocaleTimeString('fr-FR')}`, true);
+        return true;
+      } catch (error) {
+        return false;
+      }
+    }
+
+    // Achat validé côté serveur : on pousse d'abord le solde courant (sync),
+    // puis le serveur vérifie le prix actualisé et débite. Hors-ligne -> achat local.
+    async function buyOnServer(building, quantity) {
+      const syncResult = await syncWithServer();
+      if (syncResult === 'offline') return { status: 'offline' };
+      if (syncResult === 'rejected') {
+        return {
+          status: 'rejected',
+          httpStatus: 400,
+          message: 'Achat annulé : votre solde n’a pas pu être synchronisé avec le serveur.',
+          techDetail: 'sync rejected before purchase'
+        };
+      }
+      try {
+        const response = await fetch(`${API_BASE}/api/shop/buy`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ itemId: building.id, quantity })
+        });
+        const payload = await response.json().catch(() => null);
+        if (response.ok && payload) {
+          return { status: 'purchased', totalCost: payload.totalCost };
+        }
+        return {
+          status: 'rejected',
+          httpStatus: response.status,
+          message: payload && payload.error ? payload.error.message : `Achat impossible (HTTP ${response.status})`,
+          techDetail: payload && payload.error ? `${payload.error.code} · ${payload.error.requestId}` : `HTTP ${response.status}`
+        };
+      } catch (error) {
+        return { status: 'offline' };
       }
     }
 
@@ -1048,8 +1205,18 @@
       game.offlineCookies = 0;
       saveGame();
     }
-    syncWithServer();
-    setInterval(syncWithServer, 10000);
+    (async () => {
+      if (serverRestorePending) {
+        await restoreFromServer();
+        serverRestorePending = false;
+      }
+      syncWithServer();
+    })();
+    // Pas de heartbeat pendant un achat (il écraserait l'inventaire serveur avec l'ancien)
+    // ni avant la récupération de la partie serveur
+    setInterval(() => {
+      if (!purchaseInFlight && !serverRestorePending) syncWithServer();
+    }, 10000);
   </script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { initDatabase, closeDatabase } = require('../db');
-const { createApp } = require('../app');
+const { initDatabase, closeDatabase, getDb } = require('../db');
+const { createApp, computePurchaseCost } = require('../app');
 const { redact } = require('../logger');
 
 let server;
@@ -82,6 +82,155 @@ describe('Cookie Clicker API — CRUD, Sync & Error Management', () => {
     assert.equal(cheatSync.status, 400);
     assert.equal(cheatSync.body.success, false);
     assert.equal(cheatSync.body.error.code, 'ANTI_CHEAT_FLAG');
+  });
+
+  it('POST /api/shop/buy deducts the up-to-date cost and records the purchase', async () => {
+    const created = await request('/api/players', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'LucasShopper', cookies: 100 })
+    });
+    const playerId = created.body.playerId;
+
+    // 2 curseurs : 15 + ceil(15 × 1.1) = 15 + 17 = 32
+    const bought = await request('/api/shop/buy', {
+      method: 'POST',
+      body: JSON.stringify({ playerId, itemId: 'cursor', quantity: 2 })
+    });
+    assert.equal(bought.status, 200);
+    assert.equal(bought.body.status, 'purchased');
+    assert.equal(bought.body.totalCost, 32);
+    assert.equal(bought.body.cookies, 68);
+    assert.equal(bought.body.cookiesPerSecond, 2);
+    assert.equal(bought.body.inventory.cursor, 2);
+    assert.equal(bought.body.nextCost, computePurchaseCost({ baseCost: 15, costMultiplier: 1.1 }, 2, 1));
+
+    const state = await request(`/api/players/${playerId}`);
+    assert.equal(state.body.cookies, 68);
+    assert.equal(state.body.inventory.cursor, 2);
+
+    const purchases = getDb()
+      .prepare('SELECT item_id, quantity, total_cost FROM purchases WHERE player_id = ?')
+      .all(playerId);
+    assert.equal(purchases.length, 1);
+    assert.equal(purchases[0].item_id, 'cursor');
+    assert.equal(purchases[0].quantity, 2);
+    assert.equal(purchases[0].total_cost, 32);
+  });
+
+  it('POST /api/shop/buy rejects insufficient balance, unknown item and invalid quantity', async () => {
+    const created = await request('/api/players', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'PoorBaker', cookies: 10 })
+    });
+    const playerId = created.body.playerId;
+
+    const tooPoor = await request('/api/shop/buy', {
+      method: 'POST',
+      body: JSON.stringify({ playerId, itemId: 'cursor' })
+    });
+    assert.equal(tooPoor.status, 400);
+    assert.equal(tooPoor.body.error.code, 'INSUFFICIENT_BALANCE');
+    assert.equal(tooPoor.body.error.details.serverCookies, 10);
+    assert.equal(tooPoor.body.error.details.required, 15);
+
+    const unchanged = await request(`/api/players/${playerId}`);
+    assert.equal(unchanged.body.cookies, 10);
+
+    const unknownItem = await request('/api/shop/buy', {
+      method: 'POST',
+      body: JSON.stringify({ playerId, itemId: 'licorne' })
+    });
+    assert.equal(unknownItem.status, 404);
+    assert.equal(unknownItem.body.error.code, 'NOT_FOUND');
+
+    const badQuantity = await request('/api/shop/buy', {
+      method: 'POST',
+      body: JSON.stringify({ playerId, itemId: 'cursor', quantity: 0 })
+    });
+    assert.equal(badQuantity.status, 422);
+    assert.equal(badQuantity.body.error.details.field, 'quantity');
+
+    const missingItem = await request('/api/shop/buy', {
+      method: 'POST',
+      body: JSON.stringify({ playerId })
+    });
+    assert.equal(missingItem.status, 422);
+    assert.equal(missingItem.body.error.details.field, 'itemId');
+  });
+
+  it('POST /api/game/sync saves the balance and returns the saved stats', async () => {
+    const created = await request('/api/players', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'SyncSaver' })
+    });
+    const playerId = created.body.playerId;
+
+    const synced = await request('/api/game/sync', {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId,
+        cookiesClaimed: 42,
+        cookiesPerSecond: 0,
+        totalProduced: 57,
+        clicks: 57,
+        inventory: { cursor: 1, grandma: 0 },
+        achievements: ['first-click']
+      })
+    });
+    assert.equal(synced.status, 200);
+    assert.equal(synced.body.cookies, 42);
+    assert.equal(synced.body.totalProduced, 57);
+    assert.equal(synced.body.clicks, 57);
+
+    const state = await request(`/api/game/state?playerId=${playerId}`);
+    assert.equal(state.status, 200);
+    assert.equal(state.body.cookies, 42);
+    assert.deepEqual(state.body.inventory, { cursor: 1, grandma: 0 });
+    assert.deepEqual(state.body.achievements, ['first-click']);
+  });
+
+  it('POST /api/game/sync anti-cheat rejection returns the last sane server state', async () => {
+    const created = await request('/api/players', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'SneakyBaker', cookies: 30 })
+    });
+    const playerId = created.body.playerId;
+
+    const cheat = await request('/api/game/sync', {
+      method: 'POST',
+      body: JSON.stringify({ playerId, cookiesClaimed: 5e9, cookiesPerSecond: 0 })
+    });
+    assert.equal(cheat.status, 400);
+    assert.equal(cheat.body.error.code, 'ANTI_CHEAT_FLAG');
+    const { serverState } = cheat.body.error.details;
+    assert.equal(serverState.cookies, 30);
+    assert.equal(typeof serverState.inventory, 'object');
+    assert.ok(Array.isArray(serverState.achievements));
+
+    const unchanged = await request(`/api/players/${playerId}`);
+    assert.equal(unchanged.body.cookies, 30);
+  });
+
+  it('POST /api/game/sync rejects malformed inventory and achievements with 422', async () => {
+    const badInventory = await request('/api/game/sync', {
+      method: 'POST',
+      body: JSON.stringify({ cookiesClaimed: 0, inventory: { cursor: -3 } })
+    });
+    assert.equal(badInventory.status, 422);
+    assert.equal(badInventory.body.error.details.field, 'inventory');
+
+    const arrayInventory = await request('/api/game/sync', {
+      method: 'POST',
+      body: JSON.stringify({ cookiesClaimed: 0, inventory: [1, 2] })
+    });
+    assert.equal(arrayInventory.status, 422);
+
+    const badAchievements = await request('/api/game/sync', {
+      method: 'POST',
+      body: JSON.stringify({ cookiesClaimed: 0, achievements: 'first-click' })
+    });
+    assert.equal(badAchievements.status, 422);
+    assert.equal(badAchievements.body.error.details.field, 'achievements');
   });
 
   it('POST /api/game/sync returns 422 on invalid payload', async () => {

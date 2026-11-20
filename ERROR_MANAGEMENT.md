@@ -47,7 +47,8 @@ Toutes les erreurs retournées par l'API Express suivent le même schéma JSON a
 
 | Code HTTP | Code interne | Cas d'usage | Effet côté Back-End | Effet côté Front-End (UX) |
 | :---: | :--- | :--- | :--- | :--- |
-| **`400`** | `BAD_REQUEST` / `ANTI_CHEAT_FLAG` | Payload mal formé ou incrément de cookies suspect | Rejette la requête, log `WARN`, renvoie le solde serveur sain | Toast d'avertissement + resynchronisation sur l'état serveur |
+| **`400`** | `BAD_REQUEST` / `ANTI_CHEAT_FLAG` | Payload mal formé ou incrément de cookies suspect | Rejette la requête, log `WARN`, renvoie l'état serveur sain dans `details.serverState` | Bannière d'avertissement + réalignement du solde local sur `serverState` |
+| **`400`** | `INSUFFICIENT_BALANCE` | Achat boutique (`POST /api/shop/buy`) dont le coût dépasse le solde serveur | Rejette sans débiter, renvoie `serverCookies` et `required` | Bannière d'erreur, l'achat n'est pas appliqué |
 | **`404`** | `NOT_FOUND` | Route API inexistante ou ressource (joueur/bâtiment) introuvable | Middleware 404 dédié, log `INFO`/`WARN` | Affichage d'un message clair « Ressource introuvable » ou écran 404 |
 | **`409`** | `CONFLICT` | Doublon (ex. création d'un joueur déjà existant) | Rejette sans écraser la donnée, log `WARN` | Invite l'utilisateur à choisir un autre identifiant |
 | **`422`** | `VALIDATION_ERROR` | Champs manquants ou types invalides lors d'un CRUD | Liste les champs invalides (sans crash), log `WARN` | Met en évidence le champ invalide dans le formulaire |

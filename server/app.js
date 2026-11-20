@@ -7,20 +7,48 @@ const { getDb, formatPlayerRow } = require('./db');
 const { requestLogger } = require('./logger');
 const { AppError, notFoundHandler, errorHandler } = require('./errors');
 
-const SHOP_ITEMS = [
-  { id: 'cursor', name: 'Curseur', baseCost: 15, baseCps: 1, costMultiplier: 1.1 },
-  { id: 'grandma', name: 'Grand-mère', baseCost: 100, baseCps: 5, costMultiplier: 1.1 },
-  { id: 'farm', name: 'Ferme', baseCost: 500, baseCps: 20, costMultiplier: 1.1 },
-  { id: 'factory', name: 'Usine', baseCost: 3000, baseCps: 100, costMultiplier: 1.1 },
-  { id: 'portal', name: 'Portail pâtissier', baseCost: 12000, baseCps: 500, costMultiplier: 1.1 },
-  { id: 'bakery', name: 'Boulangerie', baseCost: 75000, baseCps: 2500, costMultiplier: 1.1 },
-  { id: 'mine', name: 'Mine de sucre', baseCost: 500000, baseCps: 12000, costMultiplier: 1.1 },
-  { id: 'lab', name: 'Laboratoire', baseCost: 4000000, baseCps: 60000, costMultiplier: 1.1 },
-  { id: 'dimension', name: 'Fissure dimensionnelle', baseCost: 35000000, baseCps: 300000, costMultiplier: 1.1 },
-  { id: 'galaxy', name: 'Galaxie gourmande', baseCost: 500000000, baseCps: 2000000, costMultiplier: 1.1 },
-  { id: 'time-oven', name: 'Four temporel', baseCost: 7000000000, baseCps: 15000000, costMultiplier: 1.1 },
-  { id: 'multiverse', name: 'Multivers pâtissier', baseCost: 120000000000, baseCps: 100000000, costMultiplier: 1.1 }
-];
+const MAX_PURCHASE_QUANTITY = 1000;
+
+function formatShopItem(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    baseCost: row.base_cost,
+    baseCps: row.base_cps,
+    costMultiplier: row.cost_multiplier
+  };
+}
+
+function getShopItems(db) {
+  return db.prepare('SELECT * FROM shop_items ORDER BY sort_order').all().map(formatShopItem);
+}
+
+// Prix de chaque unité arrondi à l'entier supérieur, comme côté Front :
+// prix(n) = ceil(baseCost × costMultiplier^n), n = quantité déjà possédée
+function computePurchaseCost(item, owned, quantity) {
+  let total = 0;
+  for (let index = 0; index < quantity; index += 1) {
+    total += Math.ceil(item.baseCost * Math.pow(item.costMultiplier, owned + index));
+  }
+  return total;
+}
+
+function isValidInventory(inventory) {
+  if (!inventory || typeof inventory !== 'object' || Array.isArray(inventory)) return false;
+  return Object.values(inventory).every(count => Number.isSafeInteger(count) && count >= 0);
+}
+
+function toSaveState(player) {
+  return {
+    cookies: player.cookies,
+    cookiesPerSecond: player.cookiesPerSecond,
+    totalProduced: player.totalProduced,
+    clicks: player.clicks,
+    inventory: player.inventory,
+    achievements: player.achievements,
+    lastSyncTimestamp: player.lastSyncTimestamp
+  };
+}
 
 function createApp() {
   const app = express();
@@ -48,9 +76,96 @@ function createApp() {
     }
   });
 
-  // Catalogue des bâtiments
-  app.get('/api/shop/items', (req, res) => {
-    res.json(SHOP_ITEMS);
+  // Catalogue des bâtiments (table shop_items)
+  app.get('/api/shop/items', (req, res, next) => {
+    try {
+      res.json(getShopItems(getDb()));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Achat d'un bâtiment validé côté serveur (solde, prix actualisé, historique)
+  app.post('/api/shop/buy', (req, res, next) => {
+    try {
+      const { playerId = 'player-default', itemId, quantity = 1 } = req.body || {};
+
+      if (typeof itemId !== 'string' || !itemId.trim()) {
+        return next(
+          new AppError('Le champ itemId est obligatoire.', 422, 'VALIDATION_ERROR', { field: 'itemId' })
+        );
+      }
+      if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > MAX_PURCHASE_QUANTITY) {
+        return next(
+          new AppError(
+            `Le champ quantity doit être un entier entre 1 et ${MAX_PURCHASE_QUANTITY}.`,
+            422,
+            'VALIDATION_ERROR',
+            { field: 'quantity', received: quantity }
+          )
+        );
+      }
+
+      const db = getDb();
+      const itemRow = db.prepare('SELECT * FROM shop_items WHERE id = ?').get(itemId);
+      if (!itemRow) {
+        return next(new AppError(`Bâtiment '${itemId}' introuvable.`, 404, 'NOT_FOUND'));
+      }
+      const player = db.prepare('SELECT * FROM players WHERE id = ?').get(playerId);
+      if (!player) {
+        return next(new AppError(`Joueur '${playerId}' introuvable.`, 404, 'NOT_FOUND'));
+      }
+
+      const item = formatShopItem(itemRow);
+      const inventory = JSON.parse(player.inventory_json || '{}');
+      const owned = Number.isSafeInteger(inventory[item.id]) && inventory[item.id] > 0 ? inventory[item.id] : 0;
+      const totalCost = computePurchaseCost(item, owned, quantity);
+
+      if (player.cookies < totalCost) {
+        return next(
+          new AppError('Solde de cookies insuffisant pour cet achat.', 400, 'INSUFFICIENT_BALANCE', {
+            serverCookies: player.cookies,
+            required: totalCost
+          })
+        );
+      }
+
+      const nextInventory = { ...inventory, [item.id]: owned + quantity };
+      const nextCookies = player.cookies - totalCost;
+      const nextCps = player.cookies_per_second + item.baseCps * quantity;
+      const nowIso = new Date().toISOString();
+
+      db.exec('BEGIN');
+      try {
+        db.prepare(
+          `UPDATE players
+           SET cookies = ?, cookies_per_second = ?, inventory_json = ?, updated_at = ?
+           WHERE id = ?`
+        ).run(nextCookies, nextCps, JSON.stringify(nextInventory), nowIso, playerId);
+        db.prepare(
+          `INSERT INTO purchases (player_id, item_id, quantity, total_cost, purchased_at)
+           VALUES (?, ?, ?, ?, ?)`
+        ).run(playerId, item.id, quantity, totalCost, nowIso);
+        db.exec('COMMIT');
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
+      }
+
+      return res.json({
+        status: 'purchased',
+        playerId,
+        itemId: item.id,
+        quantity,
+        totalCost,
+        cookies: nextCookies,
+        cookiesPerSecond: nextCps,
+        inventory: nextInventory,
+        nextCost: computePurchaseCost(item, owned + quantity, 1)
+      });
+    } catch (err) {
+      return next(err);
+    }
   });
 
   // État du joueur courant (par défaut player-default)
@@ -103,6 +218,28 @@ function createApp() {
         );
       }
 
+      if (inventory !== undefined && !isValidInventory(inventory)) {
+        return next(
+          new AppError(
+            "L'inventaire doit être un objet { bâtiment: quantité entière positive }.",
+            422,
+            'VALIDATION_ERROR',
+            { field: 'inventory' }
+          )
+        );
+      }
+
+      if (
+        achievements !== undefined &&
+        (!Array.isArray(achievements) || achievements.some(item => typeof item !== 'string'))
+      ) {
+        return next(
+          new AppError('Le champ achievements doit être une liste de chaînes.', 422, 'VALIDATION_ERROR', {
+            field: 'achievements'
+          })
+        );
+      }
+
       const db = getDb();
       const row = db.prepare('SELECT * FROM players WHERE id = ?').get(playerId);
       if (!row) {
@@ -123,7 +260,9 @@ function createApp() {
             {
               serverCookies: row.cookies,
               cookiesClaimed,
-              maxAllowedGain: Math.round(maxPossibleGain)
+              maxAllowedGain: Math.round(maxPossibleGain),
+              // Dernier état sain connu : le client s'y réaligne
+              serverState: toSaveState(formatPlayerRow(row))
             }
           )
         );
@@ -163,6 +302,8 @@ function createApp() {
         playerId,
         cookies: cookiesClaimed,
         cookiesPerSecond,
+        totalProduced: nextTotalProduced,
+        clicks: nextClicks,
         serverTimestamp: now
       });
     } catch (err) {
@@ -333,4 +474,4 @@ function createApp() {
   return app;
 }
 
-module.exports = { createApp, SHOP_ITEMS };
+module.exports = { createApp, computePurchaseCost };

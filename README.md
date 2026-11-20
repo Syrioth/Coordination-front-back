@@ -149,7 +149,8 @@ npm run dev
 | `GET` | `/api/health` | Vérification de la disponibilité du serveur et de la BDD SQLite |
 | `GET` | `/api/game/state` | Récupération de l'état de sauvegarde du joueur (`?playerId=...`) |
 | `POST` | `/api/game/sync` | Synchronisation et validation anti-triche du solde et des stats |
-| `GET` | `/api/shop/items` | Catalogue des 12 générateurs de la boutique |
+| `GET` | `/api/shop/items` | Catalogue des 12 générateurs de la boutique (table `shop_items`) |
+| `POST` | `/api/shop/buy` | Achat d'un générateur validé côté serveur (solde, prix actualisé, historique `purchases`) |
 | `GET` / `POST` | `/api/players` | Liste (classement) et création de profils joueurs (CRUD) |
 | `GET` / `PUT` / `DELETE` | `/api/players/:id` | Consultation, mise à jour et suppression d'un profil joueur (CRUD) |
 | `GET` | `/api/debug/crash` | Simulation d'un crash applicatif (`500`, mode `DEV` vs `PROD`) |
